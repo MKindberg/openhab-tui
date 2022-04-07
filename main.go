@@ -1,10 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/wish"
+	bm "github.com/charmbracelet/wish/bubbletea"
+	lm "github.com/charmbracelet/wish/logging"
+	"github.com/gliderlabs/ssh"
 
 	"openhab_tui/openhab_rest"
 )
@@ -125,6 +134,18 @@ func get_buttons(widgets []openhab_rest.Widget) []openhab_rest.Widget {
 	return buttons
 }
 
+//////////// WISH //////////////
+func teaHandler(s ssh.Session) (tea.Model, []tea.ProgramOption) {
+	m := initialModel(buttons)
+	return m, []tea.ProgramOption{tea.WithAltScreen()}
+}
+
+//////////// MAIN ////////////
+
+var buttons []openhab_rest.Widget
+const host = "localhost"
+const port = 23234
+
 func main() {
 	ip := "localhost"
 	sitemap_name := "default"
@@ -138,11 +159,41 @@ func main() {
 
 	sitemap := openhab_rest.Get_sitemap(ip, sitemap_name)
 
-	buttons := get_buttons(sitemap.Homepage.Widgets)
+	buttons = get_buttons(sitemap.Homepage.Widgets)
 
-	p := tea.NewProgram(initialModel(buttons))
-	if err := p.Start(); err != nil {
-		fmt.Printf("Alas, there's been an error: %v", err)
-		os.Exit(1)
+	s, err := wish.NewServer(
+		wish.WithAddress(fmt.Sprintf("%s:%d", host, port)),
+		wish.WithHostKeyPath(".ssh/term_info_ed25519"),
+		wish.WithMiddleware(
+			bm.Middleware(teaHandler),
+			lm.Middleware(),
+		),
+	)
+
+		if err != nil {
+		log.Fatalln(err)
 	}
+
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	log.Printf("Starting SSH server on %s:%d", host, port)
+	go func() {
+		if err = s.ListenAndServe(); err != nil {
+			log.Fatalln(err)
+		}
+	}()
+
+	<-done
+	log.Println("Stopping SSH server")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer func() { cancel() }()
+	if err := s.Shutdown(ctx); err != nil {
+		log.Fatalln(err)
+	}
+
+	// p := tea.NewProgram(initialModel(buttons))
+	// if err := p.Start(); err != nil {
+	// 	fmt.Printf("Alas, there's been an error: %v", err)
+	// 	os.Exit(1)
+	// }
 }
