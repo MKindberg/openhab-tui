@@ -135,14 +135,17 @@ func get_buttons(widgets []openhab_rest.Widget) []openhab_rest.Widget {
 }
 
 //////////// WISH //////////////
-func teaHandler(s ssh.Session) (tea.Model, []tea.ProgramOption) {
-	m := initialModel(buttons)
-	return m, []tea.ProgramOption{tea.WithAltScreen()}
+func create_teaHandler(ip string, sitemap_name string) func(ssh.Session) (tea.Model, []tea.ProgramOption) {
+	return func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
+		sitemap := openhab_rest.Get_sitemap(ip, sitemap_name)
+		buttons := get_buttons(sitemap.Homepage.Widgets)
+		m := initialModel(buttons)
+		return m, []tea.ProgramOption{tea.WithAltScreen()}
+	}
 }
 
 //////////// MAIN ////////////
 
-var buttons []openhab_rest.Widget
 const host = "localhost"
 const port = 23234
 
@@ -157,20 +160,16 @@ func main() {
 		sitemap_name = os.Args[2]
 	}
 
-	sitemap := openhab_rest.Get_sitemap(ip, sitemap_name)
-
-	buttons = get_buttons(sitemap.Homepage.Widgets)
-
 	s, err := wish.NewServer(
 		wish.WithAddress(fmt.Sprintf("%s:%d", host, port)),
 		wish.WithHostKeyPath(".ssh/term_info_ed25519"),
 		wish.WithMiddleware(
-			bm.Middleware(teaHandler),
+			bm.Middleware(create_teaHandler(ip, sitemap_name)),
 			lm.Middleware(),
 		),
 	)
 
-		if err != nil {
+	if err != nil {
 		log.Fatalln(err)
 	}
 
