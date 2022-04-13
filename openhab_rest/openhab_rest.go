@@ -17,13 +17,15 @@ type Item struct {
 	State string
 }
 type Widget struct {
-	WidgetId   string
 	Type       string
 	Visibility bool
 	Label      string
 	Icon       string
 	Mappings   []Mapping
 	Item       Item
+	Depth      int
+	Actions    map[string]func(*Widget)
+	Render     func(Widget) string
 	Widgets    []Widget
 }
 type Page struct {
@@ -40,16 +42,18 @@ type Sitemap struct {
 // Get sitemap from given ip with given name.
 func Get_sitemap(ip string, name string) Sitemap {
 
+	var body []byte
+	var err error
 	resp, err := http.Get("http://" + ip + ":8080/rest/sitemaps/" + name)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-
+	body, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	if len(body) == 0 {
 		log.Fatal("No sitemap found with the name " + name)
 	}

@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/wish"
 	bm "github.com/charmbracelet/wish/bubbletea"
 	lm "github.com/charmbracelet/wish/logging"
@@ -19,10 +22,9 @@ import (
 )
 
 type model struct {
+	name     string
 	widgets  []openhab_rest.Widget
-	choices  []string         // items on the to-do list
-	cursor   int              // which to-do list item our cursor is pointing at
-	selected map[int]struct{} // which to-do items are selected
+	cursor   int
 }
 
 func (m model) Init() tea.Cmd {
@@ -45,25 +47,47 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// The "up" and "k" keys move the cursor up
 		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
+			new_cursor := m.cursor - 1
+			for new_cursor > 0 && len(m.widgets[new_cursor].Actions) == 0 {
+				new_cursor--
+			}
+			if new_cursor > 0 && len(m.widgets[new_cursor].Actions) != 0 {
+				m.cursor = new_cursor
 			}
 
 		// The "down" and "j" keys move the cursor down
 		case "down", "j":
-			if m.cursor < len(m.widgets)-1 {
-				m.cursor++
+			new_cursor := m.cursor + 1
+			for new_cursor < len(m.widgets)-1 && len(m.widgets[new_cursor].Actions) == 0 {
+				new_cursor++
+			}
+			if new_cursor < len(m.widgets) && len(m.widgets[new_cursor].Actions) != 0 {
+				m.cursor = new_cursor
 			}
 
+		case "right", "l":
+			if f, ok := m.widgets[m.cursor].Actions["right"]; ok {
+				f(&(m.widgets[m.cursor]))
+			}
+		case "left", "h":
+			if f, ok := m.widgets[m.cursor].Actions["left"]; ok {
+				f(&(m.widgets[m.cursor]))
+			}
+		case "G":
+			m.cursor = len(m.widgets) - 1
+			for len(m.widgets[m.cursor].Actions) == 0 {
+				m.cursor--
+			}
+		case "g":
+			m.cursor = 0
+			for len(m.widgets[m.cursor].Actions) == 0 {
+				m.cursor++
+			}
 		// The "enter" key and the spacebar (a literal space) toggle
 		// the selected state for the item that the cursor is pointing at.
 		case "enter", " ":
-			if m.widgets[m.cursor].Item.State == "ON" {
-				m.widgets[m.cursor].Item.State = "OFF"
-				openhab_rest.Set_item(m.widgets[m.cursor].Item.Link, "OFF")
-			} else {
-				m.widgets[m.cursor].Item.State = "ON"
-				openhab_rest.Set_item(m.widgets[m.cursor].Item.Link, "ON")
+			if f, ok := m.widgets[m.cursor].Actions["enter"]; ok {
+				f(&(m.widgets[m.cursor]))
 			}
 		}
 	}
@@ -85,16 +109,17 @@ func (m model) View() string {
 		if m.cursor == i {
 			cursor = ">" // cursor!
 		}
-
-		// Is this choice selected?
-		checked := " " // not selected
-		if w.Item.State == "ON" {
-			checked = "x" // selected!
+		depth := " "
+		for j := 0; j < w.Depth; j++ {
+			depth += "  "
 		}
 
-		// Render the row
-		s += fmt.Sprintf("%s [%s] %s\n", cursor, checked, w.Label)
+		s += cursor
+		s += depth
+		s += w.Render(w)
+		s += "\n"
 	}
+
 
 	// The footer
 	s += "\nPress q to quit.\n"
@@ -104,95 +129,157 @@ func (m model) View() string {
 }
 
 func initialModel(widgets []openhab_rest.Widget) model {
-	var c []string
-	for _, w := range widgets {
-		c = append(c, w.Label)
+	cursor := 0
+	for widgets[cursor].Type == "Frame" {
+		cursor++
 	}
 	return model{
 		// Our shopping list is a grocery list
 		widgets: widgets,
-		choices: c,
-
-		// A map which indicates which choices are selected. We're using
-		// the  map like a mathematical set. The keys refer to the indexes
-		// of the `choices` slice, above.
-		selected: make(map[int]struct{}),
+		cursor:  cursor,
 	}
 }
 
-func get_buttons(widgets []openhab_rest.Widget) []openhab_rest.Widget {
-	var buttons []openhab_rest.Widget
+// Only support switches at the moment
+func get_supported_widgets(widgets []openhab_rest.Widget, depth int) []openhab_rest.Widget {
+	var supported []openhab_rest.Widget
 	for _, w := range widgets {
-		if w.Type == "Switch" {
-			buttons = append(buttons, w)
+		if w.Visibility == false {
+			continue
 		}
-		if len(w.Widgets) != 0 {
-			buttons = append(buttons, get_buttons(w.Widgets)...)
+		w.Actions = make(map[string] func(*openhab_rest.Widget))
+		w.Depth = depth
+		switch w.Type {
+		case "Switch":
+			w.Actions["enter"] = func(w *openhab_rest.Widget) {
+				if w.Item.State == "ON" {
+					w.Item.State = "OFF"
+					openhab_rest.Set_item(w.Item.Link, "OFF")
+				} else {
+					w.Item.State = "ON"
+					openhab_rest.Set_item(w.Item.Link, "ON")
+				}
+				
+			}
+			w.Render = func(w openhab_rest.Widget) string {
+				checked := " " // not selected
+				if w.Item.State == "ON" {
+					checked = "x" // selected!
+				}
+				return fmt.Sprintf("%-10s [%s]", w.Label, checked)
+			}
+			supported = append(supported, w)
+		case "Slider":
+			w.Actions["left"] = func(w *openhab_rest.Widget) {
+				old_val, _ := strconv.Atoi(w.Item.State)
+				if old_val > 0 {
+					w.Item.State = strconv.Itoa(old_val - 1 - (old_val-1)%5)
+					openhab_rest.Set_item(w.Item.Link, w.Item.State)
+				}
+			}
+			w.Actions["right"] = func(w *openhab_rest.Widget) {
+				old_val, _ := strconv.Atoi(w.Item.State)
+				if old_val < 100 {
+					w.Item.State = strconv.Itoa(old_val + 5 - old_val%5)
+					openhab_rest.Set_item(w.Item.Link, w.Item.State)
+				}
+			}
+			w.Render = func(w openhab_rest.Widget) string {
+				slider := ""
+				state, _ := strconv.Atoi(w.Item.State)
+				for j := 0; j < state/5; j++ {
+					slider += "|"
+				}
+				for j := 0; j < 20-state/5; j++ {
+					slider += " "
+				}
+				slider += ""
+				return fmt.Sprintf("%-10s [%s]", w.Label, slider)
+			}
+			supported = append(supported, w)
+		case "Frame":
+			w.Render = func(w openhab_rest.Widget) string {
+				return lipgloss.NewStyle().Background(lipgloss.Color("#7D56F4")).Render(w.Label)
+			}
+			supported = append(supported, w)
+			// Flatten frames
+			if len(w.Widgets) != 0 {
+				supported = append(supported, get_supported_widgets(w.Widgets, depth+1)...)
+			}
+		default:
+			fmt.Println(w.Type + " isn't supported")
 		}
 	}
 
-	return buttons
+	return supported
 }
 
 //////////// WISH //////////////
 func create_teaHandler(ip string, sitemap_name string) func(ssh.Session) (tea.Model, []tea.ProgramOption) {
 	return func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 		sitemap := openhab_rest.Get_sitemap(ip, sitemap_name)
-		buttons := get_buttons(sitemap.Homepage.Widgets)
-		m := initialModel(buttons)
+		widgets := get_supported_widgets(sitemap.Homepage.Widgets, 0)
+		m := initialModel(widgets)
 		return m, []tea.ProgramOption{tea.WithAltScreen()}
 	}
 }
 
 //////////// MAIN ////////////
 
-const host = "localhost"
-const port = 23234
 
 func main() {
-	ip := "localhost"
-	sitemap_name := "default"
-	if len(os.Args[1:]) > 0 {
-		ip = os.Args[1]
-	}
+	var host string
+	var ip string
+	var sitemap_name string
+	var server bool
+	var port int
 
-	if len(os.Args[1:]) > 1 {
-		sitemap_name = os.Args[2]
-	}
+	flag.StringVar(&ip, "ip", "localhost", "IP of the openhab server")
+	flag.StringVar(&sitemap_name, "sitemap", "default", "Sitemap to use")
+	flag.BoolVar(&server, "server", false, "Start as a server instead of tui")
+	flag.StringVar(&host, "host", "localhost", "Ip to host the server on")
+	flag.IntVar(&port, "port", 23234, "The port to run the server on")
 
-	s, err := wish.NewServer(
-		wish.WithAddress(fmt.Sprintf("%s:%d", host, port)),
-		wish.WithHostKeyPath(".ssh/term_info_ed25519"),
-		wish.WithMiddleware(
-			bm.Middleware(create_teaHandler(ip, sitemap_name)),
-			lm.Middleware(),
-		),
-	)
+	flag.Parse()
 
-	if err != nil {
-		log.Fatalln(err)
-	}
+	if server {
+		s, err := wish.NewServer(
+			wish.WithAddress(fmt.Sprintf("%s:%d", host, port)),
+			wish.WithHostKeyPath(".ssh/term_info_ed25519"),
+			wish.WithMiddleware(
+				bm.Middleware(create_teaHandler(ip, sitemap_name)),
+				lm.Middleware(),
+			),
+		)
 
-	done := make(chan os.Signal, 1)
-	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
-	log.Printf("Starting SSH server on %s:%d", host, port)
-	go func() {
-		if err = s.ListenAndServe(); err != nil {
+		if err != nil {
 			log.Fatalln(err)
 		}
-	}()
 
-	<-done
-	log.Println("Stopping SSH server")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer func() { cancel() }()
-	if err := s.Shutdown(ctx); err != nil {
-		log.Fatalln(err)
+		done := make(chan os.Signal, 1)
+		signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+		log.Printf("Starting SSH server on %s:%d", host, port)
+		go func() {
+			if err = s.ListenAndServe(); err != nil {
+				log.Fatalln(err)
+			}
+		}()
+
+		<-done
+		log.Println("Stopping SSH server")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer func() { cancel() }()
+		if err := s.Shutdown(ctx); err != nil {
+			log.Fatalln(err)
+		}
+
+	} else {
+		sitemap := openhab_rest.Get_sitemap(ip, sitemap_name)
+		widgets := get_supported_widgets(sitemap.Homepage.Widgets, 0)
+		p := tea.NewProgram(initialModel(widgets))
+		if err := p.Start(); err != nil {
+			fmt.Printf("Alas, there's been an error: %v", err)
+			os.Exit(1)
+		}
 	}
-
-	// p := tea.NewProgram(initialModel(buttons))
-	// if err := p.Start(); err != nil {
-	// 	fmt.Printf("Alas, there's been an error: %v", err)
-	// 	os.Exit(1)
-	// }
 }
