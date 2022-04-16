@@ -21,10 +21,141 @@ import (
 	"openhab_tui/openhab_rest"
 )
 
+//////////////////// OPTIONS ////////////////////
+type options struct {
+	host         string
+	ip           string
+	sitemap_name string
+	server       bool
+	port         int
+}
+
+func (o *options) init() {
+	flag.StringVar(&o.ip, "ip", "localhost", "IP of the openhab server")
+	flag.StringVar(&o.sitemap_name, "sitemap", "default", "Sitemap to use")
+	flag.BoolVar(&o.server, "server", false, "Start as a server instead of tui")
+	flag.StringVar(&o.host, "host", "localhost", "Ip to host the server on")
+	flag.IntVar(&o.port, "port", 23234, "The port to run the server on")
+
+	flag.Parse()
+}
+
+var opt options
+
+//////////////////// ELEMENT ////////////////////
+
+type Element interface {
+	toString() string
+	left()
+	right()
+	enter()
+	interactable() bool
+}
+
+type Switch struct {
+	label string
+	depth int
+	item  openhab_rest.Item
+}
+
+func (s Switch) toString() string {
+	status := " "
+	if s.item.State == "ON" {
+		status = "X"
+	}
+	offset := ""
+	for i := 0; i < s.depth; i++ {
+		offset += "  "
+	}
+	return fmt.Sprintf("%s%-10s [%s]", offset, s.label, status)
+}
+func (s Switch) left() {
+}
+func (s Switch) right() {
+}
+func (s Switch) enter() {
+	if s.item.State == "ON" {
+		s.item.State = "OFF"
+		openhab_rest.Set_item(s.item.Link, "OFF")
+	} else {
+		s.item.State = "ON"
+		openhab_rest.Set_item(s.item.Link, "ON")
+	}
+}
+func (s Switch) interactable() bool {
+	return true
+}
+
+type Slider struct {
+	label string
+	depth int
+	item  openhab_rest.Item
+}
+
+func (s Slider) toString() string {
+	slider := ""
+	state, _ := strconv.Atoi(s.item.State)
+	for j := 0; j < state/5; j++ {
+		slider += "|"
+	}
+	for j := 0; j < 20-state/5; j++ {
+		slider += " "
+	}
+
+	offset := ""
+	for i := 0; i < s.depth; i++ {
+		offset += "  "
+	}
+	return fmt.Sprintf("%s%-10s [%s]", offset, s.label, slider)
+}
+func (s Slider) left() {
+	old_val, _ := strconv.Atoi(s.item.State)
+	if old_val > 0 {
+		s.item.State = strconv.Itoa(old_val - 1 - (old_val-1)%5)
+		openhab_rest.Set_item(s.item.Link, s.item.State)
+	}
+}
+func (s Slider) right() {
+	old_val, _ := strconv.Atoi(s.item.State)
+	if old_val < 100 {
+		s.item.State = strconv.Itoa(old_val + 5 - old_val%5)
+		openhab_rest.Set_item(s.item.Link, s.item.State)
+	}
+}
+func (s Slider) enter() {
+}
+func (s Slider) interactable() bool {
+	return true
+}
+
+type Frame struct {
+	label string
+	depth int
+	item  openhab_rest.Item
+}
+
+func (s Frame) toString() string {
+
+	offset := ""
+	for i := 0; i < s.depth; i++ {
+		offset += "  "
+	}
+	return fmt.Sprintf("%s%s", offset, lipgloss.NewStyle().Background(lipgloss.Color("#7D56F4")).Render(s.label))
+}
+func (s Frame) left() {
+}
+func (s Frame) right() {
+}
+func (s Frame) enter() {
+}
+func (s Frame) interactable() bool {
+	return false
+}
+
+/////////////////////////////////////////////////
 type model struct {
-	name     string
-	widgets  []openhab_rest.Widget
-	cursor   int
+	elem   []Element
+	cursor int
 }
 
 func (m model) Init() tea.Cmd {
@@ -48,49 +179,46 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The "up" and "k" keys move the cursor up
 		case "up", "k":
 			new_cursor := m.cursor - 1
-			for new_cursor > 0 && len(m.widgets[new_cursor].Actions) == 0 {
+			for new_cursor > 0 && !m.elem[new_cursor].interactable() {
 				new_cursor--
 			}
-			if new_cursor > 0 && len(m.widgets[new_cursor].Actions) != 0 {
+			if new_cursor > 0 && m.elem[new_cursor].interactable() {
 				m.cursor = new_cursor
 			}
 
 		// The "down" and "j" keys move the cursor down
 		case "down", "j":
 			new_cursor := m.cursor + 1
-			for new_cursor < len(m.widgets)-1 && len(m.widgets[new_cursor].Actions) == 0 {
+			for new_cursor < len(m.elem)-1 && !m.elem[new_cursor].interactable() {
 				new_cursor++
 			}
-			if new_cursor < len(m.widgets) && len(m.widgets[new_cursor].Actions) != 0 {
+			if new_cursor < len(m.elem) && m.elem[new_cursor].interactable() {
 				m.cursor = new_cursor
 			}
 
 		case "right", "l":
-			if f, ok := m.widgets[m.cursor].Actions["right"]; ok {
-				f(&(m.widgets[m.cursor]))
-			}
+			m.elem[m.cursor].right()
 		case "left", "h":
-			if f, ok := m.widgets[m.cursor].Actions["left"]; ok {
-				f(&(m.widgets[m.cursor]))
-			}
+			m.elem[m.cursor].left()
 		case "G":
-			m.cursor = len(m.widgets) - 1
-			for len(m.widgets[m.cursor].Actions) == 0 {
+			m.cursor = len(m.elem) - 1
+			for !m.elem[m.cursor].interactable() {
 				m.cursor--
 			}
 		case "g":
 			m.cursor = 0
-			for len(m.widgets[m.cursor].Actions) == 0 {
+			for !m.elem[m.cursor].interactable() {
 				m.cursor++
 			}
 		// The "enter" key and the spacebar (a literal space) toggle
 		// the selected state for the item that the cursor is pointing at.
 		case "enter", " ":
-			if f, ok := m.widgets[m.cursor].Actions["enter"]; ok {
-				f(&(m.widgets[m.cursor]))
-			}
+			m.elem[m.cursor].enter()
 		}
 	}
+	sitemap := openhab_rest.Get_sitemap(opt.ip, opt.sitemap_name)
+	elements := get_supported_widgets(sitemap.Homepage.Widgets, 0)
+	m.elem = elements
 
 	// Return the updated model to the Bubble Tea runtime for processing.
 	// Note that we're not returning a command.
@@ -102,24 +230,18 @@ func (m model) View() string {
 	s := ""
 
 	// Iterate over our widgets
-	for i, w := range m.widgets {
+	for i, w := range m.elem {
 
 		// Is the cursor pointing at this choice?
 		cursor := " " // no cursor
 		if m.cursor == i {
 			cursor = ">" // cursor!
 		}
-		depth := " "
-		for j := 0; j < w.Depth; j++ {
-			depth += "  "
-		}
 
 		s += cursor
-		s += depth
-		s += w.Render(w)
+		s += w.toString()
 		s += "\n"
 	}
-
 
 	// The footer
 	s += "\nPress q to quit.\n"
@@ -128,126 +250,74 @@ func (m model) View() string {
 	return s
 }
 
-func initialModel(widgets []openhab_rest.Widget) model {
+func initialModel(elements []Element) model {
 	cursor := 0
-	for widgets[cursor].Type == "Frame" {
+	for !elements[cursor].interactable() {
 		cursor++
 	}
 	return model{
 		// Our shopping list is a grocery list
-		widgets: widgets,
-		cursor:  cursor,
+		elem:   elements,
+		cursor: cursor,
 	}
 }
 
 // Only support switches at the moment
-func get_supported_widgets(widgets []openhab_rest.Widget, depth int) []openhab_rest.Widget {
-	var supported []openhab_rest.Widget
+func get_supported_widgets(widgets []openhab_rest.Widget, depth int) []Element {
+	var elements []Element
 	for _, w := range widgets {
 		if w.Visibility == false {
 			continue
 		}
-		w.Actions = make(map[string] func(*openhab_rest.Widget))
-		w.Depth = depth
 		switch w.Type {
 		case "Switch":
-			w.Actions["enter"] = func(w *openhab_rest.Widget) {
-				if w.Item.State == "ON" {
-					w.Item.State = "OFF"
-					openhab_rest.Set_item(w.Item.Link, "OFF")
-				} else {
-					w.Item.State = "ON"
-					openhab_rest.Set_item(w.Item.Link, "ON")
-				}
-				
+			// Sometimes w.Item.State is a number,
+			// we should always be able to rely on w.State though
+			if w.State == "ON" {
+				w.Item.State = "ON"
+			} else if w.State == "OFF" {
+				w.Item.State = "OFF"
 			}
-			w.Render = func(w openhab_rest.Widget) string {
-				checked := " " // not selected
-				if w.Item.State == "ON" {
-					checked = "x" // selected!
-				}
-				return fmt.Sprintf("%-10s [%s]", w.Label, checked)
-			}
-			supported = append(supported, w)
+			elements = append(elements, Switch{w.Label, depth, w.Item})
 		case "Slider":
-			w.Actions["left"] = func(w *openhab_rest.Widget) {
-				old_val, _ := strconv.Atoi(w.Item.State)
-				if old_val > 0 {
-					w.Item.State = strconv.Itoa(old_val - 1 - (old_val-1)%5)
-					openhab_rest.Set_item(w.Item.Link, w.Item.State)
-				}
-			}
-			w.Actions["right"] = func(w *openhab_rest.Widget) {
-				old_val, _ := strconv.Atoi(w.Item.State)
-				if old_val < 100 {
-					w.Item.State = strconv.Itoa(old_val + 5 - old_val%5)
-					openhab_rest.Set_item(w.Item.Link, w.Item.State)
-				}
-			}
-			w.Render = func(w openhab_rest.Widget) string {
-				slider := ""
-				state, _ := strconv.Atoi(w.Item.State)
-				for j := 0; j < state/5; j++ {
-					slider += "|"
-				}
-				for j := 0; j < 20-state/5; j++ {
-					slider += " "
-				}
-				slider += ""
-				return fmt.Sprintf("%-10s [%s]", w.Label, slider)
-			}
-			supported = append(supported, w)
+			elements = append(elements, Slider{w.Label, depth, w.Item})
 		case "Frame":
-			w.Render = func(w openhab_rest.Widget) string {
-				return lipgloss.NewStyle().Background(lipgloss.Color("#7D56F4")).Render(w.Label)
-			}
-			supported = append(supported, w)
+			elements = append(elements, Frame{w.Label, depth, w.Item})
 			// Flatten frames
 			if len(w.Widgets) != 0 {
-				supported = append(supported, get_supported_widgets(w.Widgets, depth+1)...)
+				e := get_supported_widgets(w.Widgets, depth+1)
+				elements = append(elements, e...)
 			}
 		default:
 			fmt.Println(w.Type + " isn't supported")
 		}
 	}
 
-	return supported
+	return elements
 }
 
 //////////// WISH //////////////
 func create_teaHandler(ip string, sitemap_name string) func(ssh.Session) (tea.Model, []tea.ProgramOption) {
 	return func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 		sitemap := openhab_rest.Get_sitemap(ip, sitemap_name)
-		widgets := get_supported_widgets(sitemap.Homepage.Widgets, 0)
-		m := initialModel(widgets)
+		elements := get_supported_widgets(sitemap.Homepage.Widgets, 0)
+		m := initialModel(elements)
 		return m, []tea.ProgramOption{tea.WithAltScreen()}
 	}
 }
 
 //////////// MAIN ////////////
 
-
 func main() {
-	var host string
-	var ip string
-	var sitemap_name string
-	var server bool
-	var port int
 
-	flag.StringVar(&ip, "ip", "localhost", "IP of the openhab server")
-	flag.StringVar(&sitemap_name, "sitemap", "default", "Sitemap to use")
-	flag.BoolVar(&server, "server", false, "Start as a server instead of tui")
-	flag.StringVar(&host, "host", "localhost", "Ip to host the server on")
-	flag.IntVar(&port, "port", 23234, "The port to run the server on")
+	opt.init()
 
-	flag.Parse()
-
-	if server {
+	if opt.server {
 		s, err := wish.NewServer(
-			wish.WithAddress(fmt.Sprintf("%s:%d", host, port)),
+			wish.WithAddress(fmt.Sprintf("%s:%d", opt.host, opt.port)),
 			wish.WithHostKeyPath(".ssh/term_info_ed25519"),
 			wish.WithMiddleware(
-				bm.Middleware(create_teaHandler(ip, sitemap_name)),
+				bm.Middleware(create_teaHandler(opt.ip, opt.sitemap_name)),
 				lm.Middleware(),
 			),
 		)
@@ -258,7 +328,7 @@ func main() {
 
 		done := make(chan os.Signal, 1)
 		signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
-		log.Printf("Starting SSH server on %s:%d", host, port)
+		log.Printf("Starting SSH server on %s:%d", opt.host, opt.port)
 		go func() {
 			if err = s.ListenAndServe(); err != nil {
 				log.Fatalln(err)
@@ -274,9 +344,9 @@ func main() {
 		}
 
 	} else {
-		sitemap := openhab_rest.Get_sitemap(ip, sitemap_name)
-		widgets := get_supported_widgets(sitemap.Homepage.Widgets, 0)
-		p := tea.NewProgram(initialModel(widgets))
+		sitemap := openhab_rest.Get_sitemap(opt.ip, opt.sitemap_name)
+		elements := get_supported_widgets(sitemap.Homepage.Widgets, 0)
+		p := tea.NewProgram(initialModel(elements))
 		if err := p.Start(); err != nil {
 			fmt.Printf("Alas, there's been an error: %v", err)
 			os.Exit(1)

@@ -23,9 +23,7 @@ type Widget struct {
 	Icon       string
 	Mappings   []Mapping
 	Item       Item
-	Depth      int
-	Actions    map[string]func(*Widget)
-	Render     func(Widget) string
+	State      string
 	Widgets    []Widget
 }
 type Page struct {
