@@ -163,6 +163,17 @@ func (m model) Init() tea.Cmd {
 	return nil
 }
 
+func nextElement(current int, direction int, elements []Element) int {
+	cursor := current + direction
+	for 0 < cursor && cursor < len(elements)-1 && !elements[cursor].interactable() {
+		cursor += direction
+	}
+	if 0 < cursor && cursor < len(elements) && elements[cursor].interactable() {
+		return cursor
+	}
+	return current
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
@@ -178,23 +189,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// The "up" and "k" keys move the cursor up
 		case "up", "k":
-			new_cursor := m.cursor - 1
-			for new_cursor > 0 && !m.elem[new_cursor].interactable() {
-				new_cursor--
-			}
-			if new_cursor > 0 && m.elem[new_cursor].interactable() {
-				m.cursor = new_cursor
-			}
+			m.cursor = nextElement(m.cursor, -1, m.elem)
 
 		// The "down" and "j" keys move the cursor down
 		case "down", "j":
-			new_cursor := m.cursor + 1
-			for new_cursor < len(m.elem)-1 && !m.elem[new_cursor].interactable() {
-				new_cursor++
-			}
-			if new_cursor < len(m.elem) && m.elem[new_cursor].interactable() {
-				m.cursor = new_cursor
-			}
+			m.cursor = nextElement(m.cursor, 1, m.elem)
 
 		case "right", "l":
 			m.elem[m.cursor].right()
@@ -202,13 +201,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.elem[m.cursor].left()
 		case "G":
 			m.cursor = len(m.elem) - 1
-			for !m.elem[m.cursor].interactable() {
-				m.cursor--
+			if !m.elem[m.cursor].interactable() {
+				m.cursor = nextElement(m.cursor, -1, m.elem)
 			}
 		case "g":
 			m.cursor = 0
-			for !m.elem[m.cursor].interactable() {
-				m.cursor++
+			if !m.elem[m.cursor].interactable() {
+				m.cursor = nextElement(m.cursor, 1, m.elem)
 			}
 		// The "enter" key and the spacebar (a literal space) toggle
 		// the selected state for the item that the cursor is pointing at.
