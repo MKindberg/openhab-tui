@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/wish"
@@ -50,6 +52,7 @@ type Element interface {
 	right()
 	enter()
 	interactable() bool
+	getLabel() string
 }
 
 type Switch struct {
@@ -81,9 +84,14 @@ func (s Switch) enter() {
 		s.item.State = "ON"
 		openhab_rest.Set_item(s.item.Link, "ON")
 	}
+	// Sleep 1ms so openhab has time to set state before we fetch 
+	time.Sleep(time.Millisecond)
 }
 func (s Switch) interactable() bool {
 	return true
+}
+func (s Switch) getLabel() string {
+	return s.label
 }
 
 type Slider struct {
@@ -114,6 +122,8 @@ func (s Slider) left() {
 		s.item.State = strconv.Itoa(old_val - 1 - (old_val-1)%5)
 		openhab_rest.Set_item(s.item.Link, s.item.State)
 	}
+	// Sleep 1ms so openhab has time to set state before we fetch 
+	time.Sleep(time.Millisecond)
 }
 func (s Slider) right() {
 	old_val, _ := strconv.Atoi(s.item.State)
@@ -121,11 +131,16 @@ func (s Slider) right() {
 		s.item.State = strconv.Itoa(old_val + 5 - old_val%5)
 		openhab_rest.Set_item(s.item.Link, s.item.State)
 	}
+	// Sleep 1ms so openhab has time to set state before we fetch 
+	time.Sleep(time.Millisecond)
 }
 func (s Slider) enter() {
 }
 func (s Slider) interactable() bool {
 	return true
+}
+func (s Slider) getLabel() string {
+	return s.label
 }
 
 type Frame struct {
@@ -151,15 +166,18 @@ func (s Frame) enter() {
 func (s Frame) interactable() bool {
 	return false
 }
+func (s Frame) getLabel() string {
+	return s.label
+}
 
 /////////////////////////////////////////////////
 type model struct {
-	elem   []Element
-	cursor int
+	search  textinput.Model
+	elem    []Element
+	cursor  int
 }
 
 func (m model) Init() tea.Cmd {
-	// Just return `nil`, which means "no I/O right now, please."
 	return nil
 }
 
@@ -168,7 +186,7 @@ func nextElement(current int, direction int, elements []Element) int {
 	for 0 < cursor && cursor < len(elements)-1 && !elements[cursor].interactable() {
 		cursor += direction
 	}
-	if 0 < cursor && cursor < len(elements) && elements[cursor].interactable() {
+	if 0 <= cursor && cursor < len(elements) && elements[cursor].interactable() {
 		return cursor
 	}
 	return current
@@ -177,64 +195,65 @@ func nextElement(current int, direction int, elements []Element) int {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
-	// Is it a key press?
 	case tea.KeyMsg:
 
-		// Cool, what was the actual key pressed?
 		switch msg.String() {
 
-		// These keys should exit the program.
-		case "ctrl+c", "q":
+		case "ctrl+c", "esc":
 			return m, tea.Quit
 
-		// The "up" and "k" keys move the cursor up
-		case "up", "k":
+		case "up":
 			m.cursor = nextElement(m.cursor, -1, m.elem)
 
-		// The "down" and "j" keys move the cursor down
-		case "down", "j":
+		case "down":
 			m.cursor = nextElement(m.cursor, 1, m.elem)
 
-		case "right", "l":
+		case "right":
 			m.elem[m.cursor].right()
-		case "left", "h":
+		case "left":
 			m.elem[m.cursor].left()
-		case "G":
+		case "end":
 			m.cursor = len(m.elem) - 1
 			if !m.elem[m.cursor].interactable() {
 				m.cursor = nextElement(m.cursor, -1, m.elem)
 			}
-		case "g":
+		case "home":
 			m.cursor = 0
 			if !m.elem[m.cursor].interactable() {
 				m.cursor = nextElement(m.cursor, 1, m.elem)
 			}
-		// The "enter" key and the spacebar (a literal space) toggle
-		// the selected state for the item that the cursor is pointing at.
-		case "enter", " ":
+		case "enter":
+			print(m.cursor)
 			m.elem[m.cursor].enter()
 		}
 	}
+	m.search, _ = m.search.Update(msg)
 	sitemap := openhab_rest.Get_sitemap(opt.ip, opt.sitemap_name)
 	elements := get_supported_widgets(sitemap.Homepage.Widgets, 0)
-	m.elem = elements
+	m.elem = []Element{}
+	for _, e := range elements {
+		if strings.Contains(strings.ToLower(e.getLabel()), strings.ToLower(m.search.Value())) {
+			m.elem = append(m.elem, e)
+		}
+	}
+	if len(m.elem) > 0 && m.cursor > len(m.elem)-1 {
+		m.cursor = len(m.elem) - 1
+		if !m.elem[m.cursor].interactable() {
+			m.cursor = nextElement(m.cursor, -1, m.elem)
+		}
+	}
 
-	// Return the updated model to the Bubble Tea runtime for processing.
-	// Note that we're not returning a command.
 	return m, nil
 }
 
 func (m model) View() string {
-	// The header
 	s := ""
 
-	// Iterate over our widgets
+	s += m.search.View() + "\n\n"
 	for i, w := range m.elem {
-
-		// Is the cursor pointing at this choice?
-		cursor := " " // no cursor
+		cursor := " "
 		if m.cursor == i {
-			cursor = ">" // cursor!
+			cursor = ">"
 		}
 
 		s += cursor
@@ -242,10 +261,8 @@ func (m model) View() string {
 		s += "\n"
 	}
 
-	// The footer
-	s += "\nPress q to quit.\n"
+	s += "\nPress Ctrl+c or Esc to quit.\n"
 
-	// Send the UI for rendering
 	return s
 }
 
@@ -254,14 +271,17 @@ func initialModel(elements []Element) model {
 	for !elements[cursor].interactable() {
 		cursor++
 	}
+	ti := textinput.New()
+	ti.Focus()
+	ti.CharLimit = 156
+	ti.Width = 20
 	return model{
-		// Our shopping list is a grocery list
+		search: ti,
 		elem:   elements,
 		cursor: cursor,
 	}
 }
 
-// Only support switches at the moment
 func get_supported_widgets(widgets []openhab_rest.Widget, depth int) []Element {
 	var elements []Element
 	for _, w := range widgets {
@@ -270,8 +290,6 @@ func get_supported_widgets(widgets []openhab_rest.Widget, depth int) []Element {
 		}
 		switch w.Type {
 		case "Switch":
-			// Sometimes w.Item.State is a number,
-			// we should always be able to rely on w.State though
 			if w.State == "ON" {
 				w.Item.State = "ON"
 			} else if w.State == "OFF" {
