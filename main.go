@@ -242,8 +242,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	elements := get_supported_widgets(sitemap.Homepage.Widgets, 0, "")
 	m.elem = []Element{}
 	for _, e := range elements {
-		if strings.Contains(strings.ToLower(e.getBase().label), strings.ToLower(m.search.Value())) ||
-			strings.Contains(strings.ToLower(e.getBase().parentLabel), strings.ToLower(m.search.Value())) {
+		terms := strings.Split(m.search.Value(), " ")
+		l := strings.ToLower(e.getBase().label)
+		pl := strings.ToLower(e.getBase().parentLabel)
+		contains := true
+		for _, t := range terms {
+			if !(strings.Contains(l, strings.ToLower(t)) ||
+				strings.Contains(pl, strings.ToLower(t))) {
+				contains = false
+				break
+			}
+		}
+		if contains {
 			m.elem = append(m.elem, e)
 		}
 	}
