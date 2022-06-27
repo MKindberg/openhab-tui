@@ -58,7 +58,6 @@ type Element interface {
 	right()
 	enter()
 	interactable() bool
-	getLabel() string
 	getBase() Base
 }
 
@@ -94,9 +93,6 @@ func (s Switch) enter() {
 }
 func (s Switch) interactable() bool {
 	return true
-}
-func (s Switch) getLabel() string {
-	return s.b.label
 }
 func (s Switch) getBase() Base {
 	return s.b
@@ -145,9 +141,6 @@ func (s Slider) enter() {
 func (s Slider) interactable() bool {
 	return true
 }
-func (s Slider) getLabel() string {
-	return s.b.label
-}
 func (s Slider) getBase() Base {
 	return s.b
 }
@@ -172,9 +165,6 @@ func (s Frame) enter() {
 }
 func (s Frame) interactable() bool {
 	return false
-}
-func (s Frame) getLabel() string {
-	return s.b.label
 }
 func (s Frame) getBase() Base {
 	return s.b
