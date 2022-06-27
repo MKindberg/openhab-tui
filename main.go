@@ -202,6 +202,21 @@ func nextElement(current int, direction int, elements []Element) int {
 	return current
 }
 
+func search(haystacks []string, needles []string) bool {
+	for _, n := range needles {
+		found := false
+		for _, h := range haystacks {
+			if strings.Contains(h, n) {
+				found = true
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
@@ -242,18 +257,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	elements := get_supported_widgets(sitemap.Homepage.Widgets, 0, "")
 	m.elem = []Element{}
 	for _, e := range elements {
-		terms := strings.Split(m.search.Value(), " ")
+		terms := strings.Split(strings.ToLower(m.search.Value()), " ")
 		l := strings.ToLower(e.getBase().label)
 		pl := strings.ToLower(e.getBase().parentLabel)
-		contains := true
-		for _, t := range terms {
-			if !(strings.Contains(l, strings.ToLower(t)) ||
-				strings.Contains(pl, strings.ToLower(t))) {
-				contains = false
-				break
-			}
-		}
-		if contains {
+		if search([]string{l, pl}, terms) {
 			m.elem = append(m.elem, e)
 		}
 	}
