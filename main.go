@@ -45,6 +45,12 @@ func (o *options) init() {
 var opt options
 
 //////////////////// ELEMENT ////////////////////
+type Base struct {
+	label       string
+	depth       int
+	item        openhab_rest.Item
+	parentLabel string
+}
 
 type Element interface {
 	toString() string
@@ -53,56 +59,56 @@ type Element interface {
 	enter()
 	interactable() bool
 	getLabel() string
+	getBase() Base
 }
 
 type Switch struct {
-	label string
-	depth int
-	item  openhab_rest.Item
+	b Base
 }
 
 func (s Switch) toString() string {
 	status := " "
-	if s.item.State == "ON" {
+	if s.b.item.State == "ON" {
 		status = "X"
 	}
 	offset := ""
-	for i := 0; i < s.depth; i++ {
+	for i := 0; i < s.b.depth; i++ {
 		offset += "  "
 	}
-	return fmt.Sprintf("%s%-10s [%s]", offset, s.label, status)
+	return fmt.Sprintf("%s%-10s [%s]", offset, s.b.label, status)
 }
 func (s Switch) left() {
 }
 func (s Switch) right() {
 }
 func (s Switch) enter() {
-	if s.item.State == "ON" {
-		s.item.State = "OFF"
-		openhab_rest.Set_item(s.item.Link, "OFF")
+	if s.b.item.State == "ON" {
+		s.b.item.State = "OFF"
+		openhab_rest.Set_item(s.b.item.Link, "OFF")
 	} else {
-		s.item.State = "ON"
-		openhab_rest.Set_item(s.item.Link, "ON")
+		s.b.item.State = "ON"
+		openhab_rest.Set_item(s.b.item.Link, "ON")
 	}
-	// Sleep 1ms so openhab has time to set state before we fetch 
+	// Sleep 1ms so openhab has time to set state before we fetch
 	time.Sleep(time.Millisecond)
 }
 func (s Switch) interactable() bool {
 	return true
 }
 func (s Switch) getLabel() string {
-	return s.label
+	return s.b.label
+}
+func (s Switch) getBase() Base {
+	return s.b
 }
 
 type Slider struct {
-	label string
-	depth int
-	item  openhab_rest.Item
+	b Base
 }
 
 func (s Slider) toString() string {
 	slider := ""
-	state, _ := strconv.Atoi(s.item.State)
+	state, _ := strconv.Atoi(s.b.item.State)
 	for j := 0; j < state/5; j++ {
 		slider += "|"
 	}
@@ -111,27 +117,27 @@ func (s Slider) toString() string {
 	}
 
 	offset := ""
-	for i := 0; i < s.depth; i++ {
+	for i := 0; i < s.b.depth; i++ {
 		offset += "  "
 	}
-	return fmt.Sprintf("%s%-10s [%s]", offset, s.label, slider)
+	return fmt.Sprintf("%s%-10s [%s]", offset, s.b.label, slider)
 }
 func (s Slider) left() {
-	old_val, _ := strconv.Atoi(s.item.State)
+	old_val, _ := strconv.Atoi(s.b.item.State)
 	if old_val > 0 {
-		s.item.State = strconv.Itoa(old_val - 1 - (old_val-1)%5)
-		openhab_rest.Set_item(s.item.Link, s.item.State)
+		s.b.item.State = strconv.Itoa(old_val - 1 - (old_val-1)%5)
+		openhab_rest.Set_item(s.b.item.Link, s.b.item.State)
 	}
-	// Sleep 1ms so openhab has time to set state before we fetch 
+	// Sleep 1ms so openhab has time to set state before we fetch
 	time.Sleep(time.Millisecond)
 }
 func (s Slider) right() {
-	old_val, _ := strconv.Atoi(s.item.State)
+	old_val, _ := strconv.Atoi(s.b.item.State)
 	if old_val < 100 {
-		s.item.State = strconv.Itoa(old_val + 5 - old_val%5)
-		openhab_rest.Set_item(s.item.Link, s.item.State)
+		s.b.item.State = strconv.Itoa(old_val + 5 - old_val%5)
+		openhab_rest.Set_item(s.b.item.Link, s.b.item.State)
 	}
-	// Sleep 1ms so openhab has time to set state before we fetch 
+	// Sleep 1ms so openhab has time to set state before we fetch
 	time.Sleep(time.Millisecond)
 }
 func (s Slider) enter() {
@@ -140,22 +146,23 @@ func (s Slider) interactable() bool {
 	return true
 }
 func (s Slider) getLabel() string {
-	return s.label
+	return s.b.label
+}
+func (s Slider) getBase() Base {
+	return s.b
 }
 
 type Frame struct {
-	label string
-	depth int
-	item  openhab_rest.Item
+	b Base
 }
 
 func (s Frame) toString() string {
 
 	offset := ""
-	for i := 0; i < s.depth; i++ {
+	for i := 0; i < s.b.depth; i++ {
 		offset += "  "
 	}
-	return fmt.Sprintf("%s%s", offset, lipgloss.NewStyle().Background(lipgloss.Color("#7D56F4")).Render(s.label))
+	return fmt.Sprintf("%s%s", offset, lipgloss.NewStyle().Background(lipgloss.Color("#7D56F4")).Render(s.b.label))
 }
 func (s Frame) left() {
 }
@@ -167,14 +174,17 @@ func (s Frame) interactable() bool {
 	return false
 }
 func (s Frame) getLabel() string {
-	return s.label
+	return s.b.label
+}
+func (s Frame) getBase() Base {
+	return s.b
 }
 
 /////////////////////////////////////////////////
 type model struct {
-	search  textinput.Model
-	elem    []Element
-	cursor  int
+	search textinput.Model
+	elem   []Element
+	cursor int
 }
 
 func (m model) Init() tea.Cmd {
@@ -229,10 +239,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	m.search, _ = m.search.Update(msg)
 	sitemap := openhab_rest.Get_sitemap(opt.ip, opt.sitemap_name)
-	elements := get_supported_widgets(sitemap.Homepage.Widgets, 0)
+	elements := get_supported_widgets(sitemap.Homepage.Widgets, 0, "")
 	m.elem = []Element{}
 	for _, e := range elements {
-		if strings.Contains(strings.ToLower(e.getLabel()), strings.ToLower(m.search.Value())) {
+		if strings.Contains(strings.ToLower(e.getBase().label), strings.ToLower(m.search.Value())) ||
+			strings.Contains(strings.ToLower(e.getBase().parentLabel), strings.ToLower(m.search.Value())) {
 			m.elem = append(m.elem, e)
 		}
 	}
@@ -282,7 +293,7 @@ func initialModel(elements []Element) model {
 	}
 }
 
-func get_supported_widgets(widgets []openhab_rest.Widget, depth int) []Element {
+func get_supported_widgets(widgets []openhab_rest.Widget, depth int, parent string) []Element {
 	var elements []Element
 	for _, w := range widgets {
 		if w.Visibility == false {
@@ -295,14 +306,14 @@ func get_supported_widgets(widgets []openhab_rest.Widget, depth int) []Element {
 			} else if w.State == "OFF" {
 				w.Item.State = "OFF"
 			}
-			elements = append(elements, Switch{w.Label, depth, w.Item})
+			elements = append(elements, Switch{Base{w.Label, depth, w.Item, parent}})
 		case "Slider":
-			elements = append(elements, Slider{w.Label, depth, w.Item})
+			elements = append(elements, Slider{Base{w.Label, depth, w.Item, parent}})
 		case "Frame":
-			elements = append(elements, Frame{w.Label, depth, w.Item})
+			elements = append(elements, Frame{Base{w.Label, depth, w.Item, parent}})
 			// Flatten frames
 			if len(w.Widgets) != 0 {
-				e := get_supported_widgets(w.Widgets, depth+1)
+				e := get_supported_widgets(w.Widgets, depth+1, w.Label)
 				elements = append(elements, e...)
 			}
 		default:
@@ -317,7 +328,7 @@ func get_supported_widgets(widgets []openhab_rest.Widget, depth int) []Element {
 func create_teaHandler(ip string, sitemap_name string) func(ssh.Session) (tea.Model, []tea.ProgramOption) {
 	return func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 		sitemap := openhab_rest.Get_sitemap(ip, sitemap_name)
-		elements := get_supported_widgets(sitemap.Homepage.Widgets, 0)
+		elements := get_supported_widgets(sitemap.Homepage.Widgets, 0, "")
 		m := initialModel(elements)
 		return m, []tea.ProgramOption{tea.WithAltScreen()}
 	}
@@ -362,7 +373,7 @@ func main() {
 
 	} else {
 		sitemap := openhab_rest.Get_sitemap(opt.ip, opt.sitemap_name)
-		elements := get_supported_widgets(sitemap.Homepage.Widgets, 0)
+		elements := get_supported_widgets(sitemap.Homepage.Widgets, 0, "")
 		p := tea.NewProgram(initialModel(elements))
 		if err := p.Start(); err != nil {
 			fmt.Printf("Alas, there's been an error: %v", err)
