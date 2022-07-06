@@ -175,6 +175,7 @@ type model struct {
 	search textinput.Model
 	elem   []Element
 	cursor int
+	height int
 }
 
 func (m model) Init() tea.Cmd {
@@ -209,6 +210,10 @@ func search(haystacks []string, needles []string) bool {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+
+	case tea.WindowSizeMsg:
+		m.height = msg.Height
+		return m, nil
 
 	case tea.KeyMsg:
 
@@ -267,8 +272,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	s := ""
 
+	nonListLines := 10
+	LinesAround := 4
+	start := m.cursor - (m.height - nonListLines)
+	if start < 0 {
+		start = 0
+	}
+	end := start + m.height - nonListLines + LinesAround
+	if end >= len(m.elem) {
+		start -= end - len(m.elem) + 1
+	}
+
 	s += m.search.View() + "\n\n"
 	for i, w := range m.elem {
+		if i < start || i > end {
+			continue
+		}
 		cursor := " "
 		if m.cursor == i {
 			cursor = ">"
@@ -297,6 +316,7 @@ func initialModel(elements []Element) model {
 		search: ti,
 		elem:   elements,
 		cursor: cursor,
+		height: 20,
 	}
 }
 
