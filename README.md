@@ -1,4 +1,4 @@
-A tui for openhab built with (bubbletea)[https://github.com/charmbracelet/bubbletea] and (wish)[https://github.com/charmbracelet/wish] accesible either as a program or over ssh. It will create a layout based on a sitemap of your choice and currently support Switch, Slider and Frame.
+A tui for openhab built with [bubbletea](https://github.com/charmbracelet/bubbletea) and [wish](https://github.com/charmbracelet/wish) accesible either as a program or over ssh. It will create a layout based on a sitemap of your choice and currently support Switch, Slider and Frame.
 
 # Usage
 
